@@ -66,6 +66,12 @@ async function loadDashboard() {
   $$("#stats [data-go]").forEach((b) => (b.onclick = () => b.dataset.go && show(b.dataset.go)));
   $("#dashList").innerHTML = all.slice(0, 8).map((b) => `<div class="line"><span>#${b.id} ${esc(b.receiver_name)} · ${esc(b.receiver_city || b.dest_country || "")}</span><span class="badge s-${b.status}">${STATUS[b.status] ?? b.status}</span></div>`).join("") || `<p class="muted">No bookings yet.</p>`;
   const reqs = n((b) => b.requested); $("#reqBadge").hidden = !reqs; $("#reqBadge").textContent = reqs;
+  // Monday FSC reminder: shows from Monday until "Done for this week" is pressed
+  const monday = new Date(today); monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  const week = monday.toISOString().slice(0, 10);
+  let doneWeek = null; try { doneWeek = localStorage.getItem("fscDoneWeek"); } catch {}
+  $("#fscNote").hidden = doneWeek === week;
+  $("#fscDone").onclick = () => { try { localStorage.setItem("fscDoneWeek", week); } catch {} $("#fscNote").hidden = true; };
 }
 
 // ---------- bookings ----------
@@ -133,6 +139,12 @@ $("#checkAll").onclick = async (e) => {
   try { const { data, error } = await sb.functions.invoke("track", { body: {} }); if (error) throw error; toast(`Checked ${data.checked} parcels`); await loadBookings(); }
   catch (err) { toast("Check failed: " + err.message); }
   e.target.textContent = "Check all active parcels now";
+};
+$("#labelsA4").onclick = () => {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const ids = bookings.filter((b) => !b.imported && !b.requested && new Date(b.created_at) >= today).map((b) => b.id);
+  if (!ids.length) return toast("No bookings made today yet");
+  open("print.html?labels=" + ids.join(","), "_blank");
 };
 
 // ---------- new booking ----------

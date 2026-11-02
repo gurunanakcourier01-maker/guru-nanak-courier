@@ -44,6 +44,16 @@
     <!-- Dashboard -->
     <section data-view="dashboard">
       <h2>Today</h2>
+      <div class="card" id="fscNote" hidden>
+        <b>Monday: fuel surcharge (FSC) check</b>
+        <p class="muted">DHL, FedEx and UPS change their fuel surcharge every week. Open their India pages, then type the new % on the Vendors page.</p>
+        <div class="actions">
+          <a class="btn" href="https://mydhl.express.dhl/in/en/ship/surcharges.html" target="_blank" rel="noopener">DHL India</a>
+          <a class="btn" href="https://www.fedex.com/en-in/shipping/fuel-surcharge.html" target="_blank" rel="noopener">FedEx India</a>
+          <a class="btn" href="https://www.ups.com/in/en/support/shipping-support/shipping-costs-rates/fuel-surcharges.page" target="_blank" rel="noopener">UPS India</a>
+          <button class="ghost" id="fscDone">Done for this week</button>
+        </div>
+      </div>
       <div class="stats" id="stats"></div>
       <h3>Latest bookings</h3>
       <div id="dashList"></div>
@@ -54,6 +64,7 @@
       <div class="chips" id="chips"></div>
       <input id="search" placeholder="Search name, phone, AWB or forwarding number">
       <button id="checkAll" class="ghost wide">Check all active parcels now</button>
+      <button id="labelsA4" class="ghost wide">Print today's labels on A4 (4 per sheet)</button>
       <div id="list"></div>
     </section>
 
@@ -171,7 +182,8 @@
       <div class="row"><label>GSTIN<input name="gstin" autocapitalize="characters"></label><label>State<input name="state" placeholder="e.g. Punjab"></label></div>
       <label>Address<input name="address"></label>
       <div class="row"><label>Phone<input name="phone"></label><label>Email<input name="email" type="email"></label></div>
-      <div class="row"><label>UPI ID (for the pay QR)<input name="upi_id" placeholder="name@bank"></label><label>Bank details<input name="bank_details"></label></div>
+      <div class="row"><label>UPI ID (for the pay QR)<input name="upi_id" placeholder="name@bank"></label><label>PAN (printed on bills)<input name="pan" autocapitalize="characters"></label></div>
+      <label>Bank details (printed on bills)<input name="bank_details" placeholder="A/C- … IFSC- …"></label>
       <div class="row3"><label>Invoice prefix<input name="invoice_prefix"></label><label>GST %<input name="default_gst_pct" type="number" step="0.01"></label><label>SAC code<input name="sac_code"></label></div>
       <label>Voice note language<select id="voiceLang"><option value="en-IN">English (India)</option><option value="hi-IN">Hindi</option><option value="pa-IN">Punjabi</option></select></label>
       <button class="primary">Save settings</button>

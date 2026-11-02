@@ -30,6 +30,23 @@
   .totals td { border: 0; padding: 3px 6px; }
   .qr svg, .qr img { width: 100%; }
   .muted { color: #555; }
+  .center { text-align: center; }
+  /* four labels on one A4 sheet (cut along the lines) */
+  .sheet4 { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 0; padding: 6mm; height: 297mm; box-sizing: border-box; }
+  .sheet4 .cell { border: 1px dashed #999; padding: 4mm; overflow: hidden; font-size: 11px; }
+  .sheet4 .big { font-size: 20px; }
+  .sheet4 .qr { width: 26mm; }
+  /* invoice laid out like the old GNC bills */
+  .bill { font-size: 11px; box-sizing: border-box; }
+  .bill h1 { font-size: 20px; margin: 2px 0; }
+  .bill small { display: block; font-size: 9px; color: #444; text-transform: uppercase; }
+  .bill table { margin-top: 0; }
+  .bill .hdr td { vertical-align: top; border: 1px solid #333; }
+  .bill .lines th { background: #f2f2f2; font-size: 10px; }
+  .bill .lines td, .bill .lines th { border: 1px solid #333; padding: 3px 4px; }
+  .bill .lines tbody td { border-top: 0; border-bottom: 0; }
+  .bill .lines tfoot td { border-top: 1px solid #333; }
+  .bill p { margin: 4px 0; }
   @media print {
     body { background: #fff; } .bar { display: none; } .page { margin: 0; box-shadow: none; }
     @page { margin: 0; }
@@ -62,14 +79,23 @@ function words(n) {
   return "Rupees " + w(r) + (ps ? " and " + two(ps) + " Paise" : "") + " Only";
 }
 
-async function label(id) {
-  const [{ data: b, error }, { data: co }] = await Promise.all([
-    sb.from("bookings").select("*").eq("id", id).single(), sb.from("company").select("name, phone, address").eq("id", 1).maybeSingle()]);
+// ?label=12 one 4x6 label; ?labels=12,13,14,15 four to an A4 sheet
+async function labels(ids, a4) {
+  const [{ data: list, error }, { data: co }] = await Promise.all([
+    sb.from("bookings").select("*").in("id", ids).order("id"), sb.from("company").select("name, phone, address").eq("id", 1).maybeSingle()]);
   if (error) throw error;
-  out.innerHTML = `
-    <div class="page label">
+  if (!list.length) throw new Error("Booking not found");
+  const pages = [];
+  for (let i = 0; i < list.length; i += a4 ? 4 : 1) pages.push(list.slice(i, i + (a4 ? 4 : 1)));
+  out.innerHTML = pages.map((pg) => a4 ? `<div class="page a4 sheet4">${pg.map((b) => labelHtml(b, co)).join("")}</div>` : labelHtml(pg[0], co, "page label")).join("");
+  list.forEach((b) => JsBarcode("#bc" + b.id, "GN" + String(b.id).padStart(6, "0"), { height: a4 ? 36 : 50, displayValue: false, margin: 0, width: a4 ? 1.6 : 2 }));
+}
+
+function labelHtml(b, co, cls = "cell") {
+  return `
+    <div class="${cls}">
       <div class="head"><div class="co"><b>${esc(co?.name ?? "Guru Nanak Courier Services")}</b><br><span class="muted">${esc(co?.phone ?? "")}</span></div><img src="logo.svg" alt=""></div>
-      <div class="box"><small>Booking no.</small><div class="big">GN${String(b.id).padStart(6, "0")}</div><svg id="bc"></svg></div>
+      <div class="box"><small>Booking no.</small><div class="big">GN${String(b.id).padStart(6, "0")}</div><svg id="bc${b.id}"></svg></div>
       <div class="box"><small>To</small><b>${esc(b.receiver_name)}</b><br>${esc(b.receiver_address ?? "")}<br>${esc([b.receiver_city, b.dest_postcode].filter(Boolean).join(" "))}<br><b>${esc(b.dest_country ?? "")}</b><br>${esc(b.receiver_phone ?? "")}</div>
       <div class="box"><small>From</small>${esc(b.sender_name)} ${esc(b.sender_phone ?? "")}</div>
       <div class="two">
@@ -85,7 +111,6 @@ async function label(id) {
         <div><b>Scan to track</b><br><span class="muted">or visit the tracking page with code</span><br><span class="big" style="font-size:18px">${esc(b.track_code)}</span></div>
       </div>
     </div>`;
-  JsBarcode("#bc", "GN" + String(b.id).padStart(6, "0"), { height: 50, displayValue: false, margin: 0, width: 2 });
 }
 
 async function invoice(id) {
@@ -97,37 +122,46 @@ async function invoice(id) {
   const c = inv.customers ?? {};
   const due = Number(inv.total) - Number(inv.paid);
   const upi = co?.upi_id && due > 0 ? `upi://pay?pa=${encodeURIComponent(co.upi_id)}&pn=${encodeURIComponent(co.name)}&am=${due.toFixed(2)}&cu=INR&tn=${encodeURIComponent("Invoice " + inv.number)}` : null;
+  // same layout as the old GNC bills: one line per parcel with its own CGST / SGST (or IGST) and line total
+  const pct = Number(co?.default_gst_pct ?? 18), inter = Number(inv.igst) > 0;
+  const n2 = (x) => (Math.round(x * 100) / 100).toFixed(2).replace(/\.00$/, "");
+  const rows = (items ?? []).map((b) => {
+    const amt = Number(b.amount ?? 0), tax = amt * pct / 100, kg = Number(b.chargeable_kg ?? b.weight_kg ?? 0);
+    return `<tr><td>${esc(b.forwarding_no ?? b.awb ?? "GN" + String(b.id).padStart(6, "0"))}</td><td>${day(b.created_at)}</td><td class="n">${kg || ""}</td><td>KGS</td>
+      <td class="n">${kg ? n2(amt / kg) : ""}</td><td class="n">${n2(amt)}</td><td>INDIA</td><td>${esc((b.dest_country ?? "").toUpperCase())}</td>
+      <td class="n">${inter ? 0 : n2(tax / 2)}</td><td class="n">${inter ? 0 : n2(tax / 2)}</td><td class="n">${inter ? n2(tax) : 0}</td><td class="n">0</td><td class="n">${n2(amt + tax)}</td></tr>`;
+  }).join("");
+  const addr = esc([c.address, c.city, c.state, c.postcode].filter(Boolean).join(", "));
   out.innerHTML = `
-    <div class="page a4">
-      <div class="head">
-        <div class="co"><img src="logo.svg" alt="" style="float:left;margin-right:10px"><b>${esc(co?.name)}</b><br>${esc(co?.address ?? "")}<br>${esc(co?.phone ?? "")} ${esc(co?.email ?? "")}<br>${co?.gstin ? "GSTIN: <b>" + esc(co.gstin) + "</b>" : "<span style='color:#a32d2d'>GSTIN not set (Settings)</span>"}${co?.state ? " · State: " + esc(co.state) : ""}</div>
-        <div style="text-align:right"><h1>TAX INVOICE</h1><b>${esc(inv.number)}</b><br>Date: ${day(inv.invoice_date)}<br>SAC: ${esc(co?.sac_code ?? "996812")}</div>
-      </div>
-      <div class="box"><small>Bill to</small><b>${esc(c.name ?? "Walk-in customer")}</b><br>${esc([c.address, c.city, c.state, c.postcode].filter(Boolean).join(", "))}<br>${esc(c.phone ?? "")}${c.gstin ? "<br>GSTIN: " + esc(c.gstin) : ""}</div>
-      <table>
-        <thead><tr><th>#</th><th>Date</th><th>Booking</th><th>Destination</th><th>Tracking no.</th><th class="n">Kg</th><th class="n">Amount (₹)</th></tr></thead>
-        <tbody>${(items ?? []).map((b, i) => `<tr><td>${i + 1}</td><td>${day(b.created_at)}</td><td>GN${String(b.id).padStart(6, "0")}<br><small>${esc(b.receiver_name)}</small></td>
-          <td>${esc([b.receiver_city, b.dest_country].filter(Boolean).join(", "))}</td><td>${esc(b.forwarding_no ?? b.awb ?? "")}</td>
-          <td class="n">${b.chargeable_kg ?? b.weight_kg ?? ""}</td><td class="n">${Number(b.amount ?? 0).toFixed(2)}</td></tr>`).join("")}</tbody>
+    <div class="page a4 bill">
+      <div class="center"><small>TAX INVOICE</small><h1>${esc((co?.name ?? "").toUpperCase())}</h1>${esc(co?.address ?? "")}<br>
+        ${co?.gstin ? "<b>GSTIN No " + esc(co.gstin) + "</b>" : "<b style='color:#a32d2d'>GSTIN not set (Settings)</b>"}${co?.phone ? " · " + esc(co.phone) : ""}</div>
+      <table class="hdr"><tr>
+        <td><small>Bill to</small><b>${esc((c.name ?? "Walk-in customer").toUpperCase())}</b><br>${addr}${c.gstin ? "<br>GSTIN No:- " + esc(c.gstin) : ""}</td>
+        <td><small>Place of supply</small>${esc(c.state || co?.state || "")}</td>
+        <td><small>Invoice no</small><b>${esc(inv.number)}</b><small style="margin-top:8px">Dated</small><b>${day(inv.invoice_date)}</b></td>
+      </tr></table>
+      <table class="lines">
+        <thead><tr><th>Description</th><th>Date</th><th class="n">Weight</th><th>Units</th><th class="n">Rate</th><th class="n">Amount</th><th>Origin</th><th>Destination</th>
+          <th class="n">CGST</th><th class="n">SGST</th><th class="n">IGST</th><th class="n">CESS</th><th class="n">Total</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="5"><b>Total</b></td><td class="n">${n2(Number(inv.taxable))}</td><td colspan="2"></td>
+          <td class="n">${n2(Number(inv.cgst))}</td><td class="n">${n2(Number(inv.sgst))}</td><td class="n">${n2(Number(inv.igst))}</td><td class="n">0</td><td class="n"><b>${Number(inv.total).toFixed(2)}</b></td></tr></tfoot>
       </table>
-      <div class="two" style="margin-top:10px">
-        <div>${upi ? `<div style="width:120px" class="qr">${qrSvg(upi, 3)}</div><b>Scan to pay ${inr(due)} by UPI</b><br>${esc(co.upi_id)}` : ""}
-          ${co?.bank_details ? `<p><b>Bank:</b> ${esc(co.bank_details)}</p>` : ""}</div>
-        <table class="totals">
-          <tr><td>Taxable value</td><td class="n">${inr(inv.taxable)}</td></tr>
-          ${Number(inv.igst) ? `<tr><td>IGST @ ${co?.default_gst_pct ?? 18}%</td><td class="n">${inr(inv.igst)}</td></tr>`
-            : `<tr><td>CGST @ ${(co?.default_gst_pct ?? 18) / 2}%</td><td class="n">${inr(inv.cgst)}</td></tr><tr><td>SGST @ ${(co?.default_gst_pct ?? 18) / 2}%</td><td class="n">${inr(inv.sgst)}</td></tr>`}
-          <tr><td><b>Total</b></td><td class="n"><b>${inr(inv.total)}</b></td></tr>
-          ${Number(inv.paid) ? `<tr><td>Paid</td><td class="n">${inr(inv.paid)}</td></tr><tr><td><b>Balance due</b></td><td class="n"><b>${inr(due)}</b></td></tr>` : ""}
-        </table>
-      </div>
-      <p><b>Amount in words:</b> ${words(Number(inv.total))}</p>
-      <p class="muted">Courier services (SAC ${esc(co?.sac_code ?? "996812")}). This is a computer-generated invoice.</p>
-      <p style="text-align:right;margin-top:40px">For ${esc(co?.name)}<br><br><br>Authorised signatory</p>
+      <table class="hdr foot"><tr>
+        <td><small>Amount chargeable (in words)</small><b>${words(Number(inv.total))}</b>
+          ${co?.pan ? `<p><b>PAN: ${esc(co.pan)}</b></p>` : ""}${co?.bank_details ? `<p><b>${esc(co.bank_details)}</b></p>` : ""}
+          <p>Note: Please make cheques in favour of "${esc((co?.name ?? "").toUpperCase())}"</p>
+          ${Number(inv.paid) ? `<p>Paid ${inr(inv.paid)} · <b>Balance due ${inr(due)}</b></p>` : ""}</td>
+        <td style="width:100px">${upi ? `<div class="qr" style="width:80px">${qrSvg(upi, 3)}</div><small>Scan to pay ${inr(due)} by UPI</small>` : ""}</td>
+        <td class="center">For ${esc((co?.name ?? "").toUpperCase())}<br><br><br><br>Authorised Signatory</td>
+      </tr></table>
+      <p class="muted center">Courier services, SAC ${esc(co?.sac_code ?? "996812")}. Computer-generated invoice.</p>
     </div>`;
 }
 
-const run = p.get("label") ? label(p.get("label")) : p.get("invoice") ? invoice(p.get("invoice")) : Promise.reject(new Error("Nothing to print"));
+const ids = (p.get("labels") ?? p.get("label") ?? "").split(",").map(Number).filter(Boolean);
+const run = ids.length ? labels(ids, p.has("labels")) : p.get("invoice") ? invoice(p.get("invoice")) : Promise.reject(new Error("Nothing to print"));
 run.catch((e) => (out.innerHTML = `<p style="text-align:center;padding:40px;color:#a32d2d">${esc(e.message)}. Are you logged in?</p>`));
 </script>
 </body>
