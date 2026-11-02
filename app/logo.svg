@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Guru Nanak Courier Services">
+  <rect width="120" height="120" rx="26" fill="#0f6e56"/>
+  <!-- globe -->
+  <circle cx="60" cy="60" r="34" fill="none" stroke="#e1f5ee" stroke-width="4"/>
+  <ellipse cx="60" cy="60" rx="15" ry="34" fill="none" stroke="#e1f5ee" stroke-width="3"/>
+  <path d="M27 50h66M27 70h66" stroke="#e1f5ee" stroke-width="3"/>
+  <!-- flight path + parcel -->
+  <path d="M18 92 C40 98 78 92 98 66" fill="none" stroke="#f2a623" stroke-width="5" stroke-linecap="round" stroke-dasharray="2 9"/>
+  <rect x="86" y="44" width="22" height="22" rx="3" fill="#f2a623" transform="rotate(-18 97 55)"/>
+  <path d="M90 50l14-4.5" stroke="#0f6e56" stroke-width="2.5" transform="rotate(-18 97 55)"/>
+</svg>

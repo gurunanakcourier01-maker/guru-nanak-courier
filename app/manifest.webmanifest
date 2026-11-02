@@ -1,0 +1,9 @@
+{
+  "name": "Guru Nanak Courier Services",
+  "short_name": "GN Courier",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#f6f5f1",
+  "theme_color": "#0f6e56",
+  "icons": [{ "src": "logo.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

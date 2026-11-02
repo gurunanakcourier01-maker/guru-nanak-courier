@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guru Nanak Courier · Office</title>
+<link rel="icon" href="logo.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0f6e56">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="logo.svg" alt="" width="32" height="32"><b>Guru Nanak Courier</b><small id="who"></small></div>
+  <button id="logout" class="ghost" hidden>Log out</button>
+</header>
+
+<section id="login" class="narrow" hidden>
+  <h2>Staff login</h2>
+  <form id="loginForm">
+    <label>Email<input name="email" type="email" required></label>
+    <label>Password<input name="password" type="password" required></label>
+    <button class="primary">Log in</button>
+    <p class="error" id="loginError"></p>
+  </form>
+  <p class="muted">Customers: use the <a href="portal.html">customer portal</a>.</p>
+</section>
+
+<div id="app" class="layout" hidden>
+  <nav class="side">
+    <button data-view="dashboard" class="on">Dashboard</button>
+    <button data-view="bookings">Bookings <b id="reqBadge" class="pill" hidden></b></button>
+    <button data-view="newbooking">New booking</button>
+    <button data-view="quote">Get quote</button>
+    <button data-view="customers">Customers</button>
+    <button data-view="billing">Billing</button>
+    <button data-view="vendors">Vendors & rates</button>
+    <button data-view="settings">Settings</button>
+  </nav>
+
+  <main class="content">
+    <!-- Dashboard -->
+    <section data-view="dashboard">
+      <h2>Today</h2>
+      <div class="stats" id="stats"></div>
+      <h3>Latest bookings</h3>
+      <div id="dashList"></div>
+    </section>
+
+    <!-- Bookings -->
+    <section data-view="bookings" hidden>
+      <div class="chips" id="chips"></div>
+      <input id="search" placeholder="Search name, phone, AWB or forwarding number">
+      <button id="checkAll" class="ghost wide">Check all active parcels now</button>
+      <div id="list"></div>
+    </section>
+
+    <!-- New booking -->
+    <form data-view="newbooking" id="bookingForm" hidden>
+      <h2>New booking</h2>
+      <fieldset><legend>Customer (sender)</legend>
+        <label>Customer<input name="customer" list="customerList" placeholder="Type a name or phone; new names are added automatically" required></label>
+        <datalist id="customerList"></datalist>
+        <div class="row">
+          <label>Sender name<input name="sender_name" required></label>
+          <label>Sender phone<input name="sender_phone" inputmode="tel"></label>
+        </div>
+      </fieldset>
+      <fieldset><legend>Receiver</legend>
+        <div class="row">
+          <label>Name<input name="receiver_name" required></label>
+          <label>Phone<input name="receiver_phone" inputmode="tel"></label>
+        </div>
+        <label>Address<input name="receiver_address"></label>
+        <div class="row3">
+          <label>City<input name="receiver_city"></label>
+          <label>Postcode<input name="dest_postcode" autocapitalize="characters"></label>
+          <label>Country<input name="dest_country" list="countryList" required placeholder="e.g. Canada"></label>
+        </div>
+        <datalist id="countryList"></datalist>
+      </fieldset>
+      <fieldset><legend>Parcel</legend>
+        <div class="row3">
+          <label>Actual weight (kg)<input name="weight_kg" type="number" step="0.01" min="0" required></label>
+          <label>Pieces<input name="pieces" type="number" min="1" value="1"></label>
+          <label class="check" style="margin-top:24px"><input type="checkbox" name="doc"> Document</label>
+        </div>
+        <div class="row3">
+          <label>Length (cm)<input name="length_cm" type="number" step="0.1" min="0"></label>
+          <label>Width (cm)<input name="width_cm" type="number" step="0.1" min="0"></label>
+          <label>Height (cm)<input name="height_cm" type="number" step="0.1" min="0"></label>
+        </div>
+        <p class="muted">Chargeable weight: <b id="chargeable">–</b> (higher of actual and L×W×H ÷ 5000, rounded up to 0.5 kg)</p>
+        <div class="row">
+          <label>Contents<input name="contents" placeholder="e.g. clothes, documents"></label>
+          <label>Declared value (₹)<input name="declared_value" type="number" step="0.01" min="0"></label>
+        </div>
+      </fieldset>
+      <fieldset><legend>Service and price</legend>
+        <button type="button" id="findPrices" class="ghost wide">Find vendor prices for this parcel</button>
+        <div id="priceOptions"></div>
+        <div class="row">
+          <label>Booked with<select name="courier_id" id="courierSelect"></select></label>
+          <label>Their AWB / tracking no.<input name="awb" autocapitalize="characters"></label>
+        </div>
+        <div class="row">
+          <label>Forwarding network<select name="forwarding_courier_id" id="fwdSelect"></select></label>
+          <label>Forwarding no. (DHL/UPS/FedEx)<input name="forwarding_no" autocapitalize="characters"></label>
+        </div>
+        <div class="row">
+          <label>Vendor cost incl. FSC + GST (₹)<input name="vendor_cost" type="number" step="0.01" min="0"></label>
+          <label>Your price before GST (₹)<input name="amount" type="number" step="0.01" min="0" required></label>
+        </div>
+        <p class="muted" id="margin"></p>
+        <input type="hidden" name="rate_card_id">
+        <label class="check"><input type="checkbox" name="paid"> Customer has paid</label>
+      </fieldset>
+      <button class="primary">Save booking</button>
+    </form>
+
+    <!-- Quote -->
+    <form data-view="quote" id="quote" hidden>
+      <h2>Get quote</h2>
+      <label>Country<input name="country" list="countryList" required placeholder="Start typing, e.g. Canada"></label>
+      <div class="row">
+        <label>Weight (kg)<input name="weight" type="number" step="0.01" min="0.01" required></label>
+        <label>Postcode (exact price)<input name="postcode" placeholder="e.g. M5V 2T6 or 3000" autocapitalize="characters"></label>
+      </div>
+      <label class="check"><input type="checkbox" name="doc"> Document</label>
+      <button class="primary">Show prices</button>
+      <div id="quoteOut"></div>
+    </form>
+
+    <!-- Customers -->
+    <section data-view="customers" hidden>
+      <div class="row"><input id="custSearch" placeholder="Search customers"><button id="custNew" class="ghost">+ Add customer</button></div>
+      <form id="custForm" class="card" hidden>
+        <input type="hidden" name="cid">
+        <div class="row"><label>Name<input name="name" required></label><label>Phone<input name="phone"></label></div>
+        <div class="row"><label>Email<input name="email" type="email"></label><label>GSTIN<input name="gstin" autocapitalize="characters"></label></div>
+        <label>Address<input name="address"></label>
+        <div class="row3"><label>City<input name="city"></label><label>State<input name="state"></label><label>Pincode<input name="postcode"></label></div>
+        <div class="row"><label>Type<select name="kind"><option value="cash">Cash (pays each time)</option><option value="account">Account (monthly bill)</option></select></label><label>Notes<input name="notes"></label></div>
+        <div class="row"><button class="primary">Save customer</button><button type="button" class="ghost" id="custCancel">Cancel</button></div>
+      </form>
+      <div id="custList"></div>
+    </section>
+
+    <!-- Billing -->
+    <section data-view="billing" hidden>
+      <div class="stats" id="dueStats"></div>
+      <h3>Not billed yet</h3>
+      <div id="unbilled"></div>
+      <h3>Invoices</h3>
+      <div id="invoiceList"></div>
+    </section>
+
+    <!-- Vendors -->
+    <section data-view="vendors" hidden>
+      <p class="muted">Set each vendor's current fuel surcharge (FSC %) and whether GST is already inside their price. Quotes add these automatically. Hidden cards had clashing prices in their sheets.</p>
+      <input id="vendorSearch" placeholder="Search vendor or service">
+      <div id="vendorList"></div>
+    </section>
+
+    <!-- Settings -->
+    <form data-view="settings" id="settingsForm" hidden>
+      <h2>Business details (printed on invoices)</h2>
+      <label>Business name<input name="name" required></label>
+      <div class="row"><label>GSTIN<input name="gstin" autocapitalize="characters"></label><label>State<input name="state" placeholder="e.g. Punjab"></label></div>
+      <label>Address<input name="address"></label>
+      <div class="row"><label>Phone<input name="phone"></label><label>Email<input name="email" type="email"></label></div>
+      <div class="row"><label>UPI ID (for the pay QR)<input name="upi_id" placeholder="name@bank"></label><label>Bank details<input name="bank_details"></label></div>
+      <div class="row3"><label>Invoice prefix<input name="invoice_prefix"></label><label>GST %<input name="default_gst_pct" type="number" step="0.01"></label><label>SAC code<input name="sac_code"></label></div>
+      <label>Voice note language<select id="voiceLang"><option value="en-IN">English (India)</option><option value="hi-IN">Hindi</option><option value="pa-IN">Punjabi</option></select></label>
+      <button class="primary">Save settings</button>
+    </form>
+  </main>
+</div>
+
+<script type="module" src="js/office.js"></script>
+</body>
+</html>

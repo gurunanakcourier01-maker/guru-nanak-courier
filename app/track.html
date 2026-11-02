@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Track Parcel · Guru Nanak Courier</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<header><div><b>Guru Nanak Courier Services</b><small> · Track your parcel</small></div></header>
+<main>
+  <form id="f">
+    <label>Tracking code (on your receipt or WhatsApp message)<input id="code" required autocapitalize="characters"></label>
+    <button class="primary">Track</button>
+  </form>
+  <div id="out"></div>
+</main>
+<script>
+const LABEL = { booked: "Booked", in_transit: "In transit", out_for_delivery: "Out for delivery",
+  delivery_failed: "Delivery attempt failed", problem: "Delayed – we are checking", delivered: "Delivered", expired: "Not found yet" };
+const DEMO = !window.SUPABASE_URL || SUPABASE_URL.includes("YOUR");
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const out = document.getElementById("out");
+
+async function track(code) {
+  out.innerHTML = `<p class="muted center">Checking…</p>`;
+  const p = DEMO
+    ? { courier: "DTDC", awb: "D12345678", status: "out_for_delivery", status_detail: "Out for delivery", last_location: "Pune Hub",
+        checkpoints: [{ Activity: "Booked", Location: "Ludhiana", Date: "2026-10-28" }, { Activity: "In transit", Location: "Delhi Gateway", Date: "2026-10-29" },
+          { Activity: "Out for delivery", Location: "Pune Hub", Date: "2026-10-30" }], tracking_url: "https://www.dtdc.in/tracking.asp" }
+    : (await supabase.createClient(SUPABASE_URL, SUPABASE_KEY).rpc("track_parcel", { code })).data?.[0];
+  if (!p) { out.innerHTML = `<p class="error center">We couldn't find that code. Please check it, or call us.</p>`; return; }
+  const steps = [...(p.checkpoints ?? [])].reverse();
+  out.innerHTML = `
+    <article>
+      <div class="top"><span>${esc(p.courier)} · ${esc(p.awb ?? "")}</span><span class="badge s-${esc(p.status)}">${LABEL[p.status] ?? esc(p.status)}</span></div>
+      <h3>${esc(p.status_detail ?? LABEL[p.status])}</h3>
+      ${p.last_location ? `<p class="muted">Last seen: ${esc(p.last_location)}</p>` : ""}
+      <ul class="timeline">${steps.map((s) => `<li><b>${esc(s.Activity)}</b><br><span class="muted">${esc(s.Location)} · ${esc(s.Date)} ${esc(s.Time ?? "")}</span></li>`).join("")}</ul>
+      ${p.tracking_url ? `<a class="btn" href="${esc(p.tracking_url.endsWith("nums=") ? p.tracking_url + encodeURIComponent(p.awb ?? "") : p.tracking_url)}" target="_blank" rel="noopener">Open ${esc(p.courier)} tracking</a>` : ""}
+    </article>`;
+}
+
+document.getElementById("f").onsubmit = (e) => { e.preventDefault(); track(document.getElementById("code").value.trim()); };
+const c = new URLSearchParams(location.search).get("c");
+if (c) { document.getElementById("code").value = c; track(c); }
+</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Print · Guru Nanak Courier</title>
+<link rel="icon" href="logo.svg">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="config.js"></script>
+<style>
+  body { margin: 0; font: 13px/1.4 system-ui, "Segoe UI", sans-serif; color: #111; background: #eee; }
+  .bar { padding: 10px; text-align: center; background: #0f6e56; }
+  .bar button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 0; cursor: pointer; }
+  .page { background: #fff; margin: 16px auto; padding: 18px; box-shadow: 0 1px 6px rgba(0,0,0,.2); }
+  .label { width: 100mm; min-height: 150mm; padding: 5mm; }
+  .a4 { width: 210mm; min-height: 297mm; padding: 14mm; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; border-bottom: 2px solid #0f6e56; padding-bottom: 8px; }
+  .head img { width: 48px; height: 48px; }
+  .co b { font-size: 16px; color: #0f6e56; }
+  h1 { font-size: 22px; margin: 6px 0; }
+  .big { font-size: 26px; font-weight: 700; letter-spacing: 1px; }
+  .box { border: 1px solid #333; padding: 6px 8px; margin-top: 6px; }
+  .box small { display: block; color: #555; text-transform: uppercase; font-size: 10px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { border: 1px solid #999; padding: 5px 6px; text-align: left; }
+  td.n, th.n { text-align: right; }
+  .totals td { border: 0; padding: 3px 6px; }
+  .qr svg, .qr img { width: 100%; }
+  .muted { color: #555; }
+  @media print {
+    body { background: #fff; } .bar { display: none; } .page { margin: 0; box-shadow: none; }
+    @page { margin: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="bar"><button onclick="print()">Print / Save as PDF</button></div>
+<div id="out"><p style="text-align:center;padding:40px">Loading…</p></div>
+<script type="module">
+import { sb, esc, inr, day, trackLink } from "./js/common.js";
+
+const p = new URLSearchParams(location.search);
+const out = document.getElementById("out");
+const qrSvg = (text, cell = 3) => { const qr = qrcode(0, "M"); qr.addData(text); qr.make(); return qr.createSvgTag({ cellSize: cell, margin: 0 }); };
+
+// Indian-style amount in words (rupees and paise)
+function words(n) {
+  const a = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  const two = (x) => (x < 20 ? a[x] : b[Math.floor(x / 10)] + (x % 10 ? " " + a[x % 10] : ""));
+  const three = (x) => (x >= 100 ? a[Math.floor(x / 100)] + " Hundred" + (x % 100 ? " " + two(x % 100) : "") : two(x));
+  const w = (x) => {
+    if (!x) return "Zero";
+    const parts = [[10000000, "Crore"], [100000, "Lakh"], [1000, "Thousand"]]; let s = "";
+    for (const [v, name] of parts) if (x >= v) { s += w(Math.floor(x / v)) + " " + name + " "; x %= v; }
+    return (s + three(x)).trim();
+  };
+  const r = Math.floor(n), ps = Math.round((n - r) * 100);
+  return "Rupees " + w(r) + (ps ? " and " + two(ps) + " Paise" : "") + " Only";
+}
+
+async function label(id) {
+  const [{ data: b, error }, { data: co }] = await Promise.all([
+    sb.from("bookings").select("*").eq("id", id).single(), sb.from("company").select("name, phone, address").eq("id", 1).maybeSingle()]);
+  if (error) throw error;
+  out.innerHTML = `
+    <div class="page label">
+      <div class="head"><div class="co"><b>${esc(co?.name ?? "Guru Nanak Courier Services")}</b><br><span class="muted">${esc(co?.phone ?? "")}</span></div><img src="logo.svg" alt=""></div>
+      <div class="box"><small>Booking no.</small><div class="big">GN${String(b.id).padStart(6, "0")}</div><svg id="bc"></svg></div>
+      <div class="box"><small>To</small><b>${esc(b.receiver_name)}</b><br>${esc(b.receiver_address ?? "")}<br>${esc([b.receiver_city, b.dest_postcode].filter(Boolean).join(" "))}<br><b>${esc(b.dest_country ?? "")}</b><br>${esc(b.receiver_phone ?? "")}</div>
+      <div class="box"><small>From</small>${esc(b.sender_name)} ${esc(b.sender_phone ?? "")}</div>
+      <div class="two">
+        <div class="box"><small>Weight</small>${b.chargeable_kg ?? b.weight_kg ?? "–"} kg · ${b.pieces ?? 1} pc</div>
+        <div class="box"><small>Date</small>${day(b.created_at)}</div>
+      </div>
+      <div class="two">
+        <div class="box"><small>Contents</small>${esc(b.contents ?? "–")}</div>
+        <div class="box"><small>Forwarding no.</small>${esc(b.forwarding_no ?? b.awb ?? "–")}</div>
+      </div>
+      <div class="two" style="align-items:center">
+        <div class="qr box">${qrSvg(trackLink(b.track_code), 3)}</div>
+        <div><b>Scan to track</b><br><span class="muted">or visit the tracking page with code</span><br><span class="big" style="font-size:18px">${esc(b.track_code)}</span></div>
+      </div>
+    </div>`;
+  JsBarcode("#bc", "GN" + String(b.id).padStart(6, "0"), { height: 50, displayValue: false, margin: 0, width: 2 });
+}
+
+async function invoice(id) {
+  const [{ data: inv, error }, { data: items }, { data: co }] = await Promise.all([
+    sb.from("invoices").select("*, customers(*)").eq("id", id).single(),
+    sb.from("bookings").select("id, created_at, receiver_name, receiver_city, dest_country, chargeable_kg, weight_kg, forwarding_no, awb, amount").eq("invoice_id", id).order("created_at"),
+    sb.from("company").select("*").eq("id", 1).maybeSingle()]);
+  if (error) throw error;
+  const c = inv.customers ?? {};
+  const due = Number(inv.total) - Number(inv.paid);
+  const upi = co?.upi_id && due > 0 ? `upi://pay?pa=${encodeURIComponent(co.upi_id)}&pn=${encodeURIComponent(co.name)}&am=${due.toFixed(2)}&cu=INR&tn=${encodeURIComponent("Invoice " + inv.number)}` : null;
+  out.innerHTML = `
+    <div class="page a4">
+      <div class="head">
+        <div class="co"><img src="logo.svg" alt="" style="float:left;margin-right:10px"><b>${esc(co?.name)}</b><br>${esc(co?.address ?? "")}<br>${esc(co?.phone ?? "")} ${esc(co?.email ?? "")}<br>${co?.gstin ? "GSTIN: <b>" + esc(co.gstin) + "</b>" : "<span style='color:#a32d2d'>GSTIN not set (Settings)</span>"}${co?.state ? " · State: " + esc(co.state) : ""}</div>
+        <div style="text-align:right"><h1>TAX INVOICE</h1><b>${esc(inv.number)}</b><br>Date: ${day(inv.invoice_date)}<br>SAC: ${esc(co?.sac_code ?? "996812")}</div>
+      </div>
+      <div class="box"><small>Bill to</small><b>${esc(c.name ?? "Walk-in customer")}</b><br>${esc([c.address, c.city, c.state, c.postcode].filter(Boolean).join(", "))}<br>${esc(c.phone ?? "")}${c.gstin ? "<br>GSTIN: " + esc(c.gstin) : ""}</div>
+      <table>
+        <thead><tr><th>#</th><th>Date</th><th>Booking</th><th>Destination</th><th>Tracking no.</th><th class="n">Kg</th><th class="n">Amount (₹)</th></tr></thead>
+        <tbody>${(items ?? []).map((b, i) => `<tr><td>${i + 1}</td><td>${day(b.created_at)}</td><td>GN${String(b.id).padStart(6, "0")}<br><small>${esc(b.receiver_name)}</small></td>
+          <td>${esc([b.receiver_city, b.dest_country].filter(Boolean).join(", "))}</td><td>${esc(b.forwarding_no ?? b.awb ?? "")}</td>
+          <td class="n">${b.chargeable_kg ?? b.weight_kg ?? ""}</td><td class="n">${Number(b.amount ?? 0).toFixed(2)}</td></tr>`).join("")}</tbody>
+      </table>
+      <div class="two" style="margin-top:10px">
+        <div>${upi ? `<div style="width:120px" class="qr">${qrSvg(upi, 3)}</div><b>Scan to pay ${inr(due)} by UPI</b><br>${esc(co.upi_id)}` : ""}
+          ${co?.bank_details ? `<p><b>Bank:</b> ${esc(co.bank_details)}</p>` : ""}</div>
+        <table class="totals">
+          <tr><td>Taxable value</td><td class="n">${inr(inv.taxable)}</td></tr>
+          ${Number(inv.igst) ? `<tr><td>IGST @ ${co?.default_gst_pct ?? 18}%</td><td class="n">${inr(inv.igst)}</td></tr>`
+            : `<tr><td>CGST @ ${(co?.default_gst_pct ?? 18) / 2}%</td><td class="n">${inr(inv.cgst)}</td></tr><tr><td>SGST @ ${(co?.default_gst_pct ?? 18) / 2}%</td><td class="n">${inr(inv.sgst)}</td></tr>`}
+          <tr><td><b>Total</b></td><td class="n"><b>${inr(inv.total)}</b></td></tr>
+          ${Number(inv.paid) ? `<tr><td>Paid</td><td class="n">${inr(inv.paid)}</td></tr><tr><td><b>Balance due</b></td><td class="n"><b>${inr(due)}</b></td></tr>` : ""}
+        </table>
+      </div>
+      <p><b>Amount in words:</b> ${words(Number(inv.total))}</p>
+      <p class="muted">Courier services (SAC ${esc(co?.sac_code ?? "996812")}). This is a computer-generated invoice.</p>
+      <p style="text-align:right;margin-top:40px">For ${esc(co?.name)}<br><br><br>Authorised signatory</p>
+    </div>`;
+}
+
+const run = p.get("label") ? label(p.get("label")) : p.get("invoice") ? invoice(p.get("invoice")) : Promise.reject(new Error("Nothing to print"));
+run.catch((e) => (out.innerHTML = `<p style="text-align:center;padding:40px;color:#a32d2d">${esc(e.message)}. Are you logged in?</p>`));
+</script>
+</body>
+</html>

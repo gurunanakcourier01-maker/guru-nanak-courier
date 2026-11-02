@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guru Nanak Courier · Customer portal</title>
+<link rel="icon" href="logo.svg">
+<meta name="theme-color" content="#0f6e56">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="logo.svg" alt="" width="32" height="32"><b>Guru Nanak Courier</b><small id="who"></small></div>
+  <button id="logout" class="ghost" hidden>Log out</button>
+</header>
+
+<section id="login" class="narrow" hidden>
+  <h2>Customer login</h2>
+  <form id="loginForm">
+    <label>Email<input name="email" type="email" required></label>
+    <label>Password<input name="password" type="password" required></label>
+    <button class="primary">Log in</button>
+    <p class="error" id="loginError"></p>
+  </form>
+  <p class="muted">No login yet? Ask Guru Nanak Courier to invite you. Just tracking a parcel? <a href="track.html">Track here</a>.</p>
+</section>
+
+<main id="app" hidden>
+  <form id="setPassword" class="card" hidden>
+    <h3>Choose your password</h3>
+    <label>New password (at least 8 characters)<input name="password" type="password" minlength="8" required></label>
+    <button class="primary">Save password</button>
+  </form>
+
+  <nav class="tabs">
+    <button data-tab="parcels" class="on">My parcels</button>
+    <button data-tab="bills">Bills</button>
+    <button data-tab="request">Book a parcel</button>
+  </nav>
+
+  <section id="parcels"><div id="parcelList"></div></section>
+
+  <section id="bills" hidden>
+    <div class="stats" id="balance"></div>
+    <div id="billList"></div>
+  </section>
+
+  <form id="request" hidden>
+    <p class="muted">Send us the details; our team confirms the price and pickup. You can also tap <b>AI</b> and say or scan the address.</p>
+    <fieldset><legend>Receiver</legend>
+      <div class="row"><label>Name<input name="receiver_name" required></label><label>Phone<input name="receiver_phone" inputmode="tel"></label></div>
+      <label>Address<input name="receiver_address" required></label>
+      <div class="row3"><label>City<input name="receiver_city"></label><label>Postcode<input name="dest_postcode"></label><label>Country<input name="dest_country" required></label></div>
+    </fieldset>
+    <fieldset><legend>Parcel</legend>
+      <div class="row"><label>Approx. weight (kg)<input name="weight_kg" type="number" step="0.1" min="0" required></label><label>Contents<input name="contents"></label></div>
+      <label>Declared value (₹)<input name="declared_value" type="number" step="1" min="0"></label>
+    </fieldset>
+    <button class="primary">Send booking request</button>
+  </form>
+</main>
+
+<script type="module">
+import { sb, $, $$, esc, inr, day, STATUS, toast, q, trackLink } from "./js/common.js";
+import { mountChat } from "./js/chat.js";
+let me = null;
+
+async function start(user) {
+  me = await q(sb.from("customers").select("*").maybeSingle());   // RLS: only their own record
+  if (!me) { await sb.auth.signOut(); $("#login").hidden = false; $("#loginError").textContent = "This login isn't linked to a customer account."; return; }
+  $("#login").hidden = true; $("#app").hidden = false; $("#logout").hidden = false; $("#who").textContent = " · " + me.name;
+  if (location.hash.includes("type=invite") || location.hash.includes("type=recovery")) $("#setPassword").hidden = false;
+  mountChat(`Namaste ${me.name}! Ask where your parcel is, get a price, or book a parcel. You can also speak 🎤 or scan an address 📷.`);
+  document.addEventListener("bookings-changed", loadParcels);
+  loadParcels(); loadBills();
+}
+
+async function loadParcels() {
+  const list = await q(sb.from("bookings").select("id, track_code, created_at, receiver_name, receiver_city, dest_country, chargeable_kg, weight_kg, status, status_detail, last_location, forwarding_no, requested").order("created_at", { ascending: false }));
+  $("#parcelList").innerHTML = list.map((b) => `
+    <article><div class="top"><span>#${b.id} · ${day(b.created_at)}${b.requested ? " · <b class='pill'>Waiting for confirmation</b>" : ""}</span><span class="badge s-${b.status}">${STATUS[b.status] ?? esc(b.status)}</span></div>
+      <h3>${esc(b.receiver_name)} <small>${esc([b.receiver_city, b.dest_country].filter(Boolean).join(", "))}</small></h3>
+      ${b.last_location ? `<p class="muted">${esc(b.status_detail)} · ${esc(b.last_location)}</p>` : ""}
+      <div class="actions"><a class="btn" href="${trackLink(b.track_code)}" target="_blank">Track</a><a class="btn" href="print.html?label=${b.id}" target="_blank">Label</a></div></article>`).join("")
+    || `<p class="muted center">No parcels yet. Use “Book a parcel”.</p>`;
+}
+async function loadBills() {
+  const [inv, pays] = await Promise.all([q(sb.from("invoices").select("*").order("invoice_date", { ascending: false })), q(sb.from("payments").select("amount"))]);
+  const billed = inv.reduce((s, i) => s + Number(i.total), 0), paid = inv.reduce((s, i) => s + Number(i.paid), 0);
+  $("#balance").innerHTML = `<div class="stat"><small>Total billed</small><b>${inr(billed)}</b></div><div class="stat"><small>Paid</small><b>${inr(paid)}</b></div><div class="stat"><small>Balance due</small><b>${inr(billed - paid)}</b></div>`;
+  $("#billList").innerHTML = inv.map((i) => `<article><div class="top"><span>${esc(i.number)} · ${day(i.invoice_date)}</span>
+    <span class="badge ${i.total - i.paid > 0.5 ? "s-problem" : "s-delivered"}">${i.total - i.paid > 0.5 ? "Due " + inr(i.total - i.paid) : "Paid"}</span></div>
+    <h3>${inr(i.total)}</h3><div class="actions"><a class="btn" href="print.html?invoice=${i.id}" target="_blank">View / download</a></div></article>`).join("") || `<p class="muted center">No bills yet.</p>`;
+}
+
+$$(".tabs button").forEach((t) => (t.onclick = () => {
+  $$(".tabs button").forEach((x) => x.classList.toggle("on", x === t));
+  ["parcels", "bills", "request"].forEach((id) => ($("#" + id).hidden = t.dataset.tab !== id));
+}));
+$("#request").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(e.target));
+  try {
+    await q(sb.from("bookings").insert({ ...f, weight_kg: Number(f.weight_kg), chargeable_kg: Number(f.weight_kg), declared_value: f.declared_value ? Number(f.declared_value) : null,
+      customer_id: me.id, sender_name: me.name, sender_phone: me.phone, requested: true }));
+    e.target.reset(); toast("Request sent. We'll confirm soon."); $$(".tabs button")[0].click(); loadParcels();
+  } catch (err) { toast("Couldn't send: " + err.message); }
+};
+$("#setPassword").onsubmit = async (e) => {
+  e.preventDefault();
+  const { error } = await sb.auth.updateUser({ password: new FormData(e.target).get("password") });
+  if (error) return toast(error.message);
+  e.target.hidden = true; history.replaceState(null, "", location.pathname); toast("Password saved");
+};
+$("#loginForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const { error } = await sb.auth.signInWithPassword(Object.fromEntries(new FormData(e.target)));
+  $("#loginError").textContent = error ? "Wrong email or password." : "";
+  if (!error) start((await sb.auth.getUser()).data.user);
+};
+$("#logout").onclick = async () => { await sb.auth.signOut(); location.reload(); };
+sb.auth.getSession().then(({ data }) => (data.session ? start(data.session.user) : ($("#login").hidden = false)));
+</script>
+</body>
+</html>

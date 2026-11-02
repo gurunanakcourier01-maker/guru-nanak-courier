@@ -1,0 +1,5 @@
+# Working files with vendor rate data and local tools: never published
+.work/
+.claude/
+*.xlsx
+*.env
