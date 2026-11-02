@@ -142,7 +142,7 @@ Deno.serve(async (req) => {
     .or("awb.not.is.null,forwarding_no.not.is.null");
   query = booking_id
     ? query.eq("id", booking_id)
-    : query.not("status", "in", "(delivered,expired)")
+    : query.not("status", "in", "(delivered,expired)").eq("imported", false)   // past records never use tracking quota
         .gte("created_at", new Date(Date.now() - 30 * 864e5).toISOString())
         .order("last_checked_at", { ascending: true, nullsFirst: true })
         .limit(60);

@@ -88,7 +88,7 @@ async function loadParcels() {
 }
 async function loadBills() {
   const [inv, pays] = await Promise.all([q(sb.from("invoices").select("*").order("invoice_date", { ascending: false })), q(sb.from("payments").select("amount"))]);
-  const billed = inv.reduce((s, i) => s + Number(i.total), 0), paid = inv.reduce((s, i) => s + Number(i.paid), 0);
+  const billed = Number(me.opening_balance ?? 0) + inv.reduce((s, i) => s + Number(i.total), 0), paid = pays.reduce((s, p) => s + Number(p.amount), 0);
   $("#balance").innerHTML = `<div class="stat"><small>Total billed</small><b>${inr(billed)}</b></div><div class="stat"><small>Paid</small><b>${inr(paid)}</b></div><div class="stat"><small>Balance due</small><b>${inr(billed - paid)}</b></div>`;
   $("#billList").innerHTML = inv.map((i) => `<article><div class="top"><span>${esc(i.number)} · ${day(i.invoice_date)}</span>
     <span class="badge ${i.total - i.paid > 0.5 ? "s-problem" : "s-delivered"}">${i.total - i.paid > 0.5 ? "Due " + inr(i.total - i.paid) : "Paid"}</span></div>

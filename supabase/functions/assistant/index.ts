@@ -35,7 +35,7 @@ const STAFF_TOOLS = [
 ];
 const CUSTOMER_TOOLS = [
   { name: "my_parcels", description: "The customer's own parcels with status and tracking.", input_schema: { type: "object", properties: { query: { type: "string" } } } },
-  { name: "our_price", description: "Guru Nanak Courier's selling price for a parcel (excluding GST).",
+  { name: "our_price", description: "Guru Nanak Courier's selling price for a parcel (final price, GST included).",
     input_schema: { type: "object", properties: { country: { type: "string" }, weight_kg: { type: "number" }, document: { type: "boolean" } }, required: ["country", "weight_kg"] } },
   { name: "request_booking", description: "Send a booking request to the Guru Nanak Courier team. Only after the customer confirms the details.",
     input_schema: { type: "object", properties: {
@@ -79,9 +79,14 @@ async function runTool(name: string, input: any, who: { staff: boolean; customer
       return error ? { error: error.message } : { saved: true, booking_no: data.id, track_code: data.track_code };
     }
     if (name === "dues") {
-      const { data, error } = await admin.from("invoices").select("number, total, paid, invoice_date, customers(name, phone)").order("invoice_date");
-      if (error) return { error: error.message };
-      return (data ?? []).filter((i: any) => Number(i.total) > Number(i.paid)).map((i: any) => ({ invoice: i.number, customer: i.customers?.name, phone: i.customers?.phone, due: Number(i.total) - Number(i.paid), date: i.invoice_date }));
+      // balance per customer = opening balance + invoices - payments
+      const [{ data: cs }, { data: inv }, { data: pays }] = await Promise.all([
+        admin.from("customers").select("id, name, phone, opening_balance"), admin.from("invoices").select("customer_id, total"), admin.from("payments").select("customer_id, amount")]);
+      const due: Record<number, number> = {};
+      (cs ?? []).forEach((c: any) => (due[c.id] = Number(c.opening_balance ?? 0)));
+      (inv ?? []).forEach((i: any) => (due[i.customer_id] = (due[i.customer_id] ?? 0) + Number(i.total)));
+      (pays ?? []).forEach((p: any) => (due[p.customer_id] = (due[p.customer_id] ?? 0) - Number(p.amount)));
+      return (cs ?? []).filter((c: any) => due[c.id] > 0.5).map((c: any) => ({ customer: c.name, phone: c.phone, due: Math.round(due[c.id]) })).sort((a: any, b: any) => b.due - a.due);
     }
   } else if (who.customerId) {
     if (name === "my_parcels") {
@@ -93,7 +98,7 @@ async function runTool(name: string, input: any, who: { staff: boolean; customer
     if (name === "our_price") {
       const { data, error } = await admin.rpc("quote", { p_country: input.country, p_weight: input.weight_kg, p_doc: !!input.document, p_postcode: null });
       if (error) return { error: error.message };
-      const mine = (data ?? []).filter((q: any) => q.is_my_price).map((q: any) => ({ service: q.service, price_before_gst: q.cost }));
+      const mine = (data ?? []).filter((q: any) => q.is_my_price).map((q: any) => ({ service: q.service, price_incl_gst: q.cost }));
       return mine.length ? mine : { note: "No published price for this; the team will quote it." };
     }
     if (name === "request_booking") {
@@ -132,7 +137,7 @@ Deno.serve(async (req) => {
       "Before create_booking, list the details and ask the user to confirm. Never invent prices, numbers or statuses. " +
       "Reply in the user's language (English, Hindi or Punjabi), short and clear."
     : "You are the customer assistant of Guru Nanak Courier Services (India, international courier). " +
-      "Help the customer track their own parcels, give prices from our_price only (never mention vendors or costs), and send booking requests. " +
+      "Help the customer track their own parcels, give prices from our_price only (final prices including GST; never mention vendors or costs), and send booking requests. " +
       "If a photo is attached, read the address or document details from it. Confirm details before request_booking. " +
       "Never invent prices or statuses. Reply in the customer's language, short and friendly.";
 

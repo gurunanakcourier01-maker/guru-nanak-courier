@@ -46,12 +46,13 @@ sb.auth.getSession().then(({ data }) => (data.session ? start(data.session.user)
 async function loadDashboard() {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const month = new Date(today.getFullYear(), today.getMonth(), 1);
-  const [all, invoices] = await Promise.all([
-    q(sb.from("bookings").select("id, created_at, status, requested, invoice_id, amount, paid, receiver_name, dest_country, receiver_city").order("created_at", { ascending: false }).limit(1000)),
-    q(sb.from("invoices").select("total, paid")),
+  const [all, invoices, pays, opening] = await Promise.all([
+    q(sb.from("bookings").select("id, created_at, status, requested, invoice_id, amount, paid, imported, receiver_name, dest_country, receiver_city").order("created_at", { ascending: false }).limit(1000)),
+    q(sb.from("invoices").select("total")), q(sb.from("payments").select("amount")), q(sb.from("customers").select("opening_balance").neq("opening_balance", 0)),
   ]);
   const n = (f) => all.filter(f).length;
-  const due = invoices.reduce((s, i) => s + Number(i.total) - Number(i.paid), 0);
+  const sum = (list, k) => list.reduce((s, x) => s + Number(x[k] ?? 0), 0);
+  const due = sum(opening, "opening_balance") + sum(invoices, "total") - sum(pays, "amount");
   const stat = (label, value, view) => `<button class="stat" data-go="${view ?? ""}"><small>${label}</small><b>${value}</b></button>`;
   $("#stats").innerHTML =
     stat("Booked today", n((b) => new Date(b.created_at) >= today), "bookings") +
@@ -59,7 +60,7 @@ async function loadDashboard() {
     stat("In transit", n((b) => b.status === "in_transit" || b.status === "out_for_delivery"), "bookings") +
     stat("Problems", n((b) => b.status === "problem" || b.status === "delivery_failed"), "bookings") +
     stat("Customer requests", n((b) => b.requested), "bookings") +
-    stat("Not billed", n((b) => !b.invoice_id && !b.requested), "billing") +
+    stat("Not billed", n((b) => !b.invoice_id && !b.requested && !b.imported && b.amount != null), "billing") +
     stat("Money due", inr(due), "billing") +
     stat("Billed this month", inr(all.filter((b) => new Date(b.created_at) >= month && b.invoice_id).reduce((s, b) => s + Number(b.amount ?? 0), 0)), "billing");
   $$("#stats [data-go]").forEach((b) => (b.onclick = () => b.dataset.go && show(b.dataset.go)));
@@ -74,7 +75,7 @@ async function loadBookings() {
 }
 function renderBookings() {
   const s = $("#search").value.trim().toLowerCase();
-  const match = { all: () => true, requests: (b) => b.requested, unbilled: (b) => !b.invoice_id && !b.requested, unpaid: (b) => !b.paid,
+  const match = { all: () => true, requests: (b) => b.requested, unbilled: (b) => !b.invoice_id && !b.requested && !b.imported, unpaid: (b) => !b.paid,
     problem: (b) => b.status === "problem" || b.status === "delivery_failed" };
   const count = (k) => bookings.filter(match[k] ?? ((b) => b.status === k)).length;
   $("#chips").innerHTML = FILTERS.map(([k, l]) => `<button data-f="${k}" class="${filter === k ? "on" : ""}">${l} <b>${count(k)}</b></button>`).join("");
@@ -82,7 +83,7 @@ function renderBookings() {
     [b.id, b.receiver_name, b.sender_name, b.receiver_phone, b.sender_phone, b.awb, b.forwarding_no, b.track_code].some((v) => String(v ?? "").toLowerCase().includes(s)));
   $("#list").innerHTML = shown.map((b) => `
     <article>
-      <div class="top"><span>#${b.id} · ${day(b.created_at)} · ${esc(courierName(b.courier_id) || "—")}${b.requested ? ` · <b class="pill">Customer request</b>` : ""}</span>
+      <div class="top"><span>#${b.id} · ${day(b.created_at)} · ${esc(courierName(b.courier_id) || "—")}${b.requested ? ` · <b class="pill">Customer request</b>` : ""}${b.imported ? ` · <span class="badge">Past record</span>` : ""}</span>
         <span class="badge s-${b.status}">${STATUS[b.status] ?? esc(b.status)}</span></div>
       <h3>${esc(b.receiver_name)} <small>${esc([b.receiver_city, b.dest_country].filter(Boolean).join(", "))}</small></h3>
       <p class="muted">From ${esc(b.sender_name)}${b.customer_id ? ` (${esc(custName(b.customer_id))})` : ""} · ${b.chargeable_kg ?? b.weight_kg ?? "?"} kg
@@ -96,7 +97,7 @@ function renderBookings() {
         <button data-act="site" data-id="${b.id}">Track</button>
         <a class="btn" href="${waLink(b.receiver_phone, (b.customer_message ?? `Hello ${b.receiver_name}, your parcel #${b.id} is booked with Guru Nanak Courier.`) + `\nTrack: ${trackLink(b.track_code)}`)}" target="_blank" rel="noopener">WhatsApp</a>
         <a class="btn" href="print.html?label=${b.id}" target="_blank">Label</a>
-        ${b.invoice_id ? `<a class="btn" href="print.html?invoice=${b.invoice_id}" target="_blank">Invoice</a>` : `<button data-act="bill" data-id="${b.id}">Bill now</button>`}
+        ${b.invoice_id ? `<a class="btn" href="print.html?invoice=${b.invoice_id}" target="_blank">Invoice</a>` : b.imported ? "" : `<button data-act="bill" data-id="${b.id}">Bill now</button>`}
         <button data-act="paid" data-id="${b.id}" class="${b.paid ? "paid" : "due"}">${b.paid ? "Paid" : "Mark paid"}</button>
       </div>
     </article>`).join("") || `<p class="muted center">Nothing here.</p>`;
@@ -242,13 +243,15 @@ async function recordPayment(inv, amount, mode, reference) {
 
 async function loadBilling() {
   const [unbilled, invoices] = await Promise.all([
-    q(sb.from("bookings").select("id, customer_id, sender_name, receiver_name, dest_country, amount, created_at").is("invoice_id", null).eq("requested", false).not("amount", "is", null).order("created_at")),
+    q(sb.from("bookings").select("id, customer_id, sender_name, receiver_name, dest_country, amount, created_at").is("invoice_id", null).eq("requested", false).eq("imported", false).not("amount", "is", null).order("created_at")),
     q(sb.from("invoices").select("*").order("invoice_date", { ascending: false }).limit(300)),
   ]);
   const now = Date.now(), ageDays = (d) => (now - new Date(d)) / 864e5;
   const open = invoices.filter((i) => Number(i.total) - Number(i.paid) > 0.5);
   const bucket = (lo, hi) => open.filter((i) => ageDays(i.invoice_date) >= lo && ageDays(i.invoice_date) < hi).reduce((s, i) => s + Number(i.total) - Number(i.paid), 0);
-  $("#dueStats").innerHTML = [["Total due", bucket(0, 1e9)], ["0–30 days", bucket(0, 31)], ["31–60 days", bucket(31, 61)], ["61–90 days", bucket(61, 91)], ["90+ days", bucket(91, 1e9)]]
+  const [opening, loosePays] = await Promise.all([q(sb.from("customers").select("opening_balance").neq("opening_balance", 0)), q(sb.from("payments").select("amount").is("invoice_id", null))]);
+  const openingDue = opening.reduce((s, c) => s + Number(c.opening_balance), 0) - loosePays.reduce((s, p) => s + Number(p.amount), 0);
+  $("#dueStats").innerHTML = [["Total due", bucket(0, 1e9) + openingDue], ["Opening balances (net)", openingDue], ["0–30 days", bucket(0, 31)], ["31–60 days", bucket(31, 61)], ["61–90 days", bucket(61, 91)], ["90+ days", bucket(91, 1e9)]]
     .map(([l, v]) => `<div class="stat"><small>${l}</small><b>${inr(v)}</b></div>`).join("");
 
   const groups = {};
@@ -281,16 +284,23 @@ async function loadBilling() {
 
 // ---------- customers ----------
 async function loadCustomers() {
-  const [list, invoices] = await Promise.all([q(sb.from("customers").select("*").order("name")), q(sb.from("invoices").select("customer_id, total, paid"))]);
+  const [list, invoices, pays] = await Promise.all([q(sb.from("customers").select("*").order("name")),
+    q(sb.from("invoices").select("customer_id, total")), q(sb.from("payments").select("customer_id, amount"))]);
   customers = list; fillCustomerList();
-  const due = {}; invoices.forEach((i) => (due[i.customer_id] = (due[i.customer_id] ?? 0) + Number(i.total) - Number(i.paid)));
+  // balance = opening balance + everything billed - everything received
+  const due = {};
+  list.forEach((c) => (due[c.id] = Number(c.opening_balance ?? 0)));
+  invoices.forEach((i) => (due[i.customer_id] = (due[i.customer_id] ?? 0) + Number(i.total)));
+  pays.forEach((p) => (due[p.customer_id] = (due[p.customer_id] ?? 0) - Number(p.amount)));
   const s = $("#custSearch").value.trim().toLowerCase();
   $("#custList").innerHTML = list.filter((c) => !s || [c.name, c.phone, c.email].some((v) => String(v ?? "").toLowerCase().includes(s))).map((c) => `
     <article><div class="top"><span>${c.kind === "account" ? "Account" : "Cash"} customer${c.gstin ? " · GSTIN " + esc(c.gstin) : ""}</span>
       <span class="badge ${due[c.id] > 0.5 ? "s-problem" : "s-delivered"}">${due[c.id] > 0.5 ? "Owes " + inr(due[c.id]) : "No dues"}</span></div>
       <h3>${esc(c.name)} <small>${esc([c.city, c.state].filter(Boolean).join(", "))}</small></h3>
       <p class="muted">${esc(c.phone ?? "")} ${esc(c.email ?? "")}</p>
-      <div class="actions"><button data-edit="${c.id}">Edit</button><button data-invite="${c.id}">Invite to portal</button>
+      ${Number(c.opening_balance) ? `<p class="muted">Opening balance ${inr(c.opening_balance)}</p>` : ""}
+      <div class="actions"><button data-edit="${c.id}">Edit</button><button data-open="${c.id}">Opening balance</button>
+        <button data-receive="${c.id}">Receive payment</button><button data-invite="${c.id}">Invite to portal</button>
         ${c.phone && due[c.id] > 0.5 ? `<a class="btn" target="_blank" rel="noopener" href="${waLink(c.phone, `Namaste ${c.name}, a friendly reminder: ${inr(due[c.id])} is due to Guru Nanak Courier Services. Thank you!`)}">WhatsApp reminder</a>` : ""}</div></article>`).join("") || `<p class="muted">No customers yet. They are also added automatically from new bookings.</p>`;
 }
 $("#custSearch").oninput = loadCustomers;
@@ -301,6 +311,19 @@ $("#custList").onclick = async (e) => {
   if (b.dataset.edit) {
     const c = customers.find((x) => x.id === Number(b.dataset.edit)), f = $("#custForm");
     Object.entries(c).forEach(([k, v]) => k !== "id" && f[k]?.name === k && (f[k].value = v ?? "")); f.cid.value = c.id; f.hidden = false; window.scrollTo(0, 0);
+  }
+  if (b.dataset.open) {
+    const c = customers.find((x) => x.id === Number(b.dataset.open));
+    const v = prompt(`Amount ${c.name} owed you before using this app (₹)`, c.opening_balance ?? 0); if (v === null) return;
+    try { await q(sb.from("customers").update({ opening_balance: Number(v) || 0 }).eq("id", c.id)); toast("Opening balance saved"); loadCustomers(); }
+    catch (err) { toast("Couldn't save: " + err.message); }
+  }
+  if (b.dataset.receive) {
+    const c = customers.find((x) => x.id === Number(b.dataset.receive));
+    const amt = Number(prompt(`Amount received from ${c.name} (₹)`)); if (!amt) return;
+    const mode = prompt("Paid by: cash, UPI, bank or cheque?", "UPI") || "cash";
+    try { await q(sb.from("payments").insert({ customer_id: c.id, amount: amt, mode: mode.toLowerCase(), reference: prompt("Reference (optional)") || null })); toast("Payment saved"); loadCustomers(); }
+    catch (err) { toast("Couldn't save: " + err.message); }
   }
   if (b.dataset.invite) {
     const c = customers.find((x) => x.id === Number(b.dataset.invite));
